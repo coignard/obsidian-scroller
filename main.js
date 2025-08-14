@@ -18,6 +18,9 @@ const DEFAULT_SETTINGS = {
     focusMode: 'section',
     sectionHeaderPattern: '^# ([01]\\d|2[0-3]):[0-5]\\d',
     unfocusedOpacity: 0.25,
+
+    enableSmoothScrolling: true,
+    smoothScrollDuration: 250
 };
 
 module.exports = class ScrollerPlugin extends Plugin {
@@ -76,11 +79,12 @@ module.exports = class ScrollerPlugin extends Plugin {
                 this.view = view;
                 this.pendingScrollUpdate = false;
                 this.decorations = this.buildDecorations(view);
+                this.anim = null;
                 this.scheduleScrollUpdate();
             }
 
             update(updateTransaction) {
-                const needsDecorationUpdate = updateTransaction.docChanged   ||
+                const needsDecorationUpdate = updateTransaction.docChanged ||
                                               updateTransaction.selectionSet ||
                                               updateTransaction.viewportChanged;
                 const needsScrollUpdate = updateTransaction.docChanged || updateTransaction.selectionSet;
@@ -110,12 +114,57 @@ module.exports = class ScrollerPlugin extends Plugin {
                 return true;
             }
 
+            smoothScrollingEnabled() {
+                if (!plugin.settings.enableSmoothScrolling) return false;
+                return true;
+            }
+
+            stopAnimation() {
+                if (this.anim && this.anim.rafId) cancelAnimationFrame(this.anim.rafId);
+                this.anim = null;
+            }
+
+            animateScrollTo(targetTop) {
+                const scrollDOM = this.view.scrollDOM;
+                const maxTop = Math.max(0, scrollDOM.scrollHeight - scrollDOM.clientHeight);
+                const to = Math.max(0, Math.min(targetTop, maxTop));
+                const from = scrollDOM.scrollTop;
+                const duration = Math.max(0, Number(plugin.settings.smoothScrollDuration) || 0);
+
+                if (Math.abs(to - from) < 1 || duration === 0) {
+                    this.stopAnimation();
+                    scrollDOM.scrollTop = to;
+                    return;
+                }
+
+                this.stopAnimation();
+                const start = performance.now();
+                const ease = t => 1 - Math.pow(1 - t, 3);
+
+                const step = () => {
+                    const now = performance.now();
+                    let p = (now - start) / duration;
+                    if (p < 0) p = 0;
+                    if (p > 1) p = 1;
+                    const val = from + (to - from) * ease(p);
+                    scrollDOM.scrollTop = val;
+                    if (p < 1) {
+                        this.anim = { rafId: requestAnimationFrame(step) };
+                    } else {
+                        this.anim = null;
+                    }
+                };
+
+                this.anim = { rafId: requestAnimationFrame(step) };
+            }
+
             applyTypewriterScrolling(editorView) {
                 if (!this.shouldApplyTypewriterFeatures() || !editorView.state.selection.main.empty) return;
 
                 const { state } = editorView;
                 const cursorPosition = state.selection.main.head;
                 const editorHeight = editorView.dom.clientHeight;
+                const scrollDOM = editorView.scrollDOM;
 
                 if (plugin.settings.useLineBoundaries) {
                     const linesToKeep = plugin.settings.visibleLineCount;
@@ -123,26 +172,51 @@ module.exports = class ScrollerPlugin extends Plugin {
                     const cursorCoords = editorView.coordsAtPos(cursorPosition);
                     if (!cursorCoords) return;
 
-                    const bottomBoundary = editorHeight - (linesToKeep * lineHeight);
                     const topBoundary = linesToKeep * lineHeight;
+                    const bottomBoundary = editorHeight - (linesToKeep * lineHeight);
 
-                    if (cursorCoords.top < topBoundary) {
-                        editorView.dispatch({
-                           effects: EditorView.scrollIntoView(cursorPosition, { y: 'start', yMargin: topBoundary })
-                        });
-                    } else if (cursorCoords.bottom > bottomBoundary) {
-                        editorView.dispatch({
-                           effects: EditorView.scrollIntoView(cursorPosition, { y: 'end', yMargin: editorHeight - bottomBoundary })
-                        });
+                    const containerRect = scrollDOM.getBoundingClientRect();
+                    const currentTop = scrollDOM.scrollTop;
+                    const cursorTopInContainer = cursorCoords.top - containerRect.top + currentTop;
+                    const cursorBottomInContainer = cursorCoords.bottom - containerRect.top + currentTop;
+
+                    if (cursorTopInContainer < topBoundary) {
+                        if (this.smoothScrollingEnabled()) {
+                            this.animateScrollTo(cursorTopInContainer - topBoundary);
+                        } else {
+                            editorView.dispatch({
+                               effects: EditorView.scrollIntoView(cursorPosition, { y: 'start', yMargin: topBoundary })
+                            });
+                        }
+                    } else if (cursorBottomInContainer > bottomBoundary) {
+                        if (this.smoothScrollingEnabled()) {
+                            this.animateScrollTo(cursorBottomInContainer - bottomBoundary);
+                        } else {
+                            editorView.dispatch({
+                               effects: EditorView.scrollIntoView(cursorPosition, { y: 'end', yMargin: editorHeight - bottomBoundary })
+                            });
+                        }
                     }
                 } else {
                     const verticalOffset = editorHeight * plugin.settings.typewriterOffset;
-                    editorView.dispatch({
-                        effects: EditorView.scrollIntoView(cursorPosition, {
-                            y: "center",
-                            yMargin: verticalOffset - (editorHeight / 2)
-                        })
-                    });
+                    const coords = editorView.coordsAtPos(cursorPosition);
+                    if (!coords) return;
+
+                    const containerRect = scrollDOM.getBoundingClientRect();
+                    const currentTop = scrollDOM.scrollTop;
+                    const cursorTopInContainer = coords.top - containerRect.top + currentTop;
+                    const targetTop = cursorTopInContainer - verticalOffset;
+
+                    if (this.smoothScrollingEnabled()) {
+                        this.animateScrollTo(targetTop);
+                    } else {
+                        editorView.dispatch({
+                            effects: EditorView.scrollIntoView(cursorPosition, {
+                                y: "center",
+                                yMargin: verticalOffset - (editorHeight / 2)
+                            })
+                        });
+                    }
                 }
             }
 
@@ -237,8 +311,44 @@ module.exports = class ScrollerPlugin extends Plugin {
             const scrollContainer = editorView.scrollDOM;
             const pageHeight = scrollContainer.clientHeight * 0.8;
             const scrollDistance = direction === 'up' ? -pageHeight : pageHeight;
-            scrollContainer.scrollBy({ top: scrollDistance, behavior: 'smooth' });
+
+            if (this.settings.enableSmoothScrolling && this.settings.enableTypewriterMode) {
+                const currentTop = scrollContainer.scrollTop;
+                const targetTop = currentTop + scrollDistance;
+                this.animateScrollTo(scrollContainer, targetTop);
+            } else {
+                scrollContainer.scrollBy({ top: scrollDistance, behavior: 'smooth' });
+            }
         }
+    }
+
+    animateScrollTo(scrollContainer, targetTop) {
+        const maxTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+        const to = Math.max(0, Math.min(targetTop, maxTop));
+        const from = scrollContainer.scrollTop;
+        const duration = Math.max(0, Number(this.settings.smoothScrollDuration) || 0);
+
+        if (Math.abs(to - from) < 1 || duration === 0) {
+            scrollContainer.scrollTop = to;
+            return;
+        }
+
+        const start = performance.now();
+        const ease = t => 1 - Math.pow(1 - t, 3);
+
+        const step = () => {
+            const now = performance.now();
+            let p = (now - start) / duration;
+            if (p < 0) p = 0;
+            if (p > 1) p = 1;
+            const val = from + (to - from) * ease(p);
+            scrollContainer.scrollTop = val;
+            if (p < 1) {
+                requestAnimationFrame(step);
+            }
+        };
+
+        requestAnimationFrame(step);
     }
 
     updateDynamicStyles() {
@@ -274,16 +384,67 @@ module.exports = class ScrollerPlugin extends Plugin {
         if (!editorView) return;
 
         if (position === 'top') {
-            editorView.dispatch({
-                selection: { anchor: 0 },
-                scrollIntoView: true
-            });
+            if (this.settings.enableSmoothScrolling && this.settings.enableTypewriterMode) {
+                const scrollContainer = editorView.scrollDOM;
+                this.animateScrollTo(scrollContainer, 0);
+                editorView.dispatch({
+                    selection: { anchor: 0 }
+                });
+            } else {
+                editorView.dispatch({
+                    selection: { anchor: 0 },
+                    scrollIntoView: true
+                });
+            }
         } else {
             const documentEnd = editorView.state.doc.length;
-            editorView.dispatch({
-                selection: { anchor: documentEnd },
-                scrollIntoView: true
-            });
+
+            if (this.settings.enableTypewriterMode &&
+                (!this.settings.restrictToDailyNotes || this.isActiveFileDailyNote())) {
+
+                editorView.dispatch({
+                    selection: { anchor: documentEnd }
+                });
+
+                if (this.settings.enableSmoothScrolling) {
+                    const scrollContainer = editorView.scrollDOM;
+                    const editorHeight = editorView.dom.clientHeight;
+
+                    const endCoords = editorView.coordsAtPos(documentEnd);
+                    if (endCoords) {
+                        const containerRect = scrollContainer.getBoundingClientRect();
+                        const currentTop = scrollContainer.scrollTop;
+                        const endPosInContainer = endCoords.top - containerRect.top + currentTop;
+
+                        let targetScroll;
+                        if (this.settings.useLineBoundaries) {
+                            const linesToKeep = this.settings.visibleLineCount;
+                            const lineHeight = editorView.defaultLineHeight;
+                            const bottomBoundary = editorHeight - (linesToKeep * lineHeight);
+                            targetScroll = endPosInContainer - bottomBoundary;
+                        } else {
+                            const verticalOffset = editorHeight * this.settings.typewriterOffset;
+                            targetScroll = endPosInContainer - verticalOffset;
+                        }
+
+                        this.animateScrollTo(scrollContainer, targetScroll);
+                    }
+                }
+            } else {
+                if (this.settings.enableSmoothScrolling) {
+                    const scrollContainer = editorView.scrollDOM;
+                    const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+                    this.animateScrollTo(scrollContainer, maxScroll);
+                    editorView.dispatch({
+                        selection: { anchor: documentEnd }
+                    });
+                } else {
+                    editorView.dispatch({
+                        selection: { anchor: documentEnd },
+                        scrollIntoView: true
+                    });
+                }
+            }
         }
     }
 
@@ -320,7 +481,6 @@ module.exports = class ScrollerPlugin extends Plugin {
 
     async ensureEditModeAndScroll(position) {
         let markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-
         if (!markdownView) return;
 
         const viewState = markdownView.getState();
@@ -505,6 +665,30 @@ class ScrollerSettingTab extends PluginSettingTab {
                 .setDynamicTooltip()
                 .onChange(async (value) => {
                     this.plugin.settings.unfocusedOpacity = value / 100;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(typewriterFeaturesContainer)
+            .setName('Enable smooth scrolling')
+            .setDesc('Animate scroll when moving between lines in typewriter mode and using scroll shortcuts.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.enableSmoothScrolling)
+                .onChange(async (value) => {
+                    this.plugin.settings.enableSmoothScrolling = value;
+                    await this.plugin.saveSettings();
+                    this.display();
+                }));
+
+        new Setting(typewriterFeaturesContainer)
+            .setName('Smooth scroll duration')
+            .setDesc('Set animation duration for smooth scrolling.')
+            .setDisabled(!this.plugin.settings.enableSmoothScrolling)
+            .addSlider(slider => slider
+                .setLimits(50, 1000, 50)
+                .setValue(this.plugin.settings.smoothScrollDuration)
+                .setDynamicTooltip()
+                .onChange(async (value) => {
+                    this.plugin.settings.smoothScrollDuration = value;
                     await this.plugin.saveSettings();
                 }));
     }
