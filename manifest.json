@@ -1,0 +1,13 @@
+{
+    "id": "scroller",
+    "name": "Scroller",
+    "version": "1.0.0",
+    "minAppVersion": "1.8.10",
+    "description": "Adds typewriter mode, unfocused text dimming and commands to quickly scroll to the top or bottom of note.",
+    "author": "René Coignard",
+    "authorUrl": "https://github.com/coignard",
+    "isDesktopOnly": false,
+    "fundingUrl": {
+        "Ko-fi": "https://ko-fi.com/coignard"
+    }
+}
