@@ -15,7 +15,7 @@ const DEFAULT_SETTINGS = {
     visibleLineCount: 5,
 
     enableContentDimming: true,
-    focusMode: 'section',
+    focusMode: 'paragraph',
     sectionHeaderPattern: '^# ([01]\\d|2[0-3]):[0-5]\\d',
     unfocusedOpacity: 0.25,
 
@@ -234,7 +234,84 @@ module.exports = class ScrollerPlugin extends Plugin {
                 const { state } = editorView;
                 const cursorPosition = state.selection.main.head;
 
-                if (plugin.settings.focusMode === 'section') {
+                if (plugin.settings.focusMode === 'paragraph') {
+                    let headerRegex;
+                    try {
+                        headerRegex = new RegExp(plugin.settings.sectionHeaderPattern);
+                    } catch (error) {
+                        return RangeSet.empty;
+                    }
+
+                    const cursorLine = state.doc.lineAt(cursorPosition);
+                    let paragraphStart = null;
+                    let paragraphEnd = null;
+
+                    if (cursorLine.text.trim().length > 0) {
+                        paragraphStart = cursorLine.from;
+                        paragraphEnd = cursorLine.to;
+
+                        for (let lineNum = cursorLine.number - 1; lineNum >= 1; lineNum--) {
+                            const line = state.doc.line(lineNum);
+                            if (line.text.trim().length === 0) {
+                                break;
+                            }
+                            paragraphStart = line.from;
+                        }
+
+                        for (let lineNum = cursorLine.number + 1; lineNum <= state.doc.lines; lineNum++) {
+                            const line = state.doc.line(lineNum);
+                            if (line.text.trim().length === 0) {
+                                break;
+                            }
+                            paragraphEnd = line.to;
+                        }
+
+                        const startLineNum = state.doc.lineAt(paragraphStart).number;
+                        if (startLineNum > 1) {
+                            const prevLine = state.doc.line(startLineNum - 1);
+                            if (headerRegex.test(prevLine.text)) {
+                                paragraphStart = prevLine.from;
+                            }
+                        }
+
+                    } else {
+                        for (let lineNum = cursorLine.number - 1; lineNum >= 1; lineNum--) {
+                            const line = state.doc.line(lineNum);
+                            if (line.text.trim().length > 0) {
+                                paragraphEnd = line.to;
+                                paragraphStart = line.from;
+
+                                for (let upLineNum = lineNum - 1; upLineNum >= 1; upLineNum--) {
+                                    const upLine = state.doc.line(upLineNum);
+                                    if (upLine.text.trim().length === 0) {
+                                        break;
+                                    }
+                                    paragraphStart = upLine.from;
+                                }
+
+                                const startLineNum = state.doc.lineAt(paragraphStart).number;
+                                if (startLineNum > 1) {
+                                    const prevLine = state.doc.line(startLineNum - 1);
+                                    if (headerRegex.test(prevLine.text)) {
+                                        paragraphStart = prevLine.from;
+                                    }
+                                }
+
+                                break;
+                            }
+                        }
+                    }
+
+                    if (paragraphStart !== null && paragraphEnd !== null) {
+                        if (paragraphStart > 0) {
+                            decorationBuilder.push(dimmedDecoration.range(0, paragraphStart));
+                        }
+                        if (paragraphEnd < state.doc.length) {
+                            decorationBuilder.push(dimmedDecoration.range(paragraphEnd, state.doc.length));
+                        }
+                    }
+
+                } else if (plugin.settings.focusMode === 'section') {
                     let headerRegex;
                     try {
                         headerRegex = new RegExp(plugin.settings.sectionHeaderPattern);
@@ -630,11 +707,12 @@ class ScrollerSettingTab extends PluginSettingTab {
 
         new Setting(typewriterFeaturesContainer)
             .setName('Focus area')
-            .setDesc('Choose whether to focus on the current line or the current section.')
+            .setDesc('Choose whether to focus on the current paragraph, section or line.')
             .setDisabled(!this.plugin.settings.enableContentDimming)
             .addDropdown(dropdown => dropdown
-                .addOption('line', 'Current line')
-                .addOption('section', 'Current section')
+                .addOption('paragraph', 'Paragraph')
+                .addOption('section', 'Section')
+                .addOption('line', 'Line')
                 .setValue(this.plugin.settings.focusMode)
                 .onChange(async (value) => {
                     this.plugin.settings.focusMode = value;
@@ -653,7 +731,8 @@ class ScrollerSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
         sectionPatternSetting.settingEl.style.display =
-            (this.plugin.settings.enableContentDimming && this.plugin.settings.focusMode === 'section') ? 'flex' : 'none';
+            (this.plugin.settings.enableContentDimming &&
+            (this.plugin.settings.focusMode === 'section' || this.plugin.settings.focusMode === 'paragraph')) ? 'flex' : 'none';
 
         new Setting(typewriterFeaturesContainer)
             .setName('Unfocused content opacity')
