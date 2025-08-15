@@ -15,7 +15,7 @@ const DEFAULT_SETTINGS = {
     visibleLineCount: 5,
 
     enableContentDimming: true,
-    focusMode: 'paragraph',
+    focusMode: 'sentence',
     sectionHeaderPattern: '^# ([01]\\d|2[0-3]):[0-5]\\d',
     unfocusedOpacity: 0.25,
 
@@ -220,6 +220,26 @@ module.exports = class ScrollerPlugin extends Plugin {
                 }
             }
 
+            findSentenceBoundaries(text, position) {
+                const sentenceEndRegex = /[.!?]+[\s]*(?=[A-ZА-Я]|$)/g;
+                const boundaries = [];
+                let match;
+
+                while ((match = sentenceEndRegex.exec(text)) !== null) {
+                    boundaries.push(match.index + match[0].length);
+                }
+
+                let sentenceStart = 0;
+                for (const boundary of boundaries) {
+                    if (position <= boundary) {
+                        return { start: sentenceStart, end: boundary };
+                    }
+                    sentenceStart = boundary;
+                }
+
+                return { start: sentenceStart, end: text.length };
+            }
+
             buildDecorations(editorView) {
                 if (!this.shouldApplyTypewriterFeatures() || !plugin.settings.enableContentDimming) {
                     return RangeSet.empty;
@@ -234,7 +254,65 @@ module.exports = class ScrollerPlugin extends Plugin {
                 const { state } = editorView;
                 const cursorPosition = state.selection.main.head;
 
-                if (plugin.settings.focusMode === 'paragraph') {
+                if (plugin.settings.focusMode === 'sentence') {
+                    let headerRegex;
+                    try {
+                        headerRegex = new RegExp(plugin.settings.sectionHeaderPattern);
+                    } catch (error) {
+                        return RangeSet.empty;
+                    }
+
+                    const cursorLine = state.doc.lineAt(cursorPosition);
+                    const paragraphStartLine = this.findParagraphStart(state, cursorLine.number);
+
+                    let sentenceStart = null;
+                    let sentenceEnd = null;
+                    let includeHeader = false;
+
+                    if (paragraphStartLine && paragraphStartLine.number > 1) {
+                        const prevLine = state.doc.line(paragraphStartLine.number - 1);
+                        if (headerRegex.test(prevLine.text)) {
+                            includeHeader = true;
+                        }
+                    }
+
+                    if (cursorLine.text.trim().length > 0) {
+                        const cursorPositionInLine = cursorPosition - cursorLine.from;
+                        const sentence = this.findSentenceBoundaries(cursorLine.text, cursorPositionInLine);
+                        sentenceStart = cursorLine.from + sentence.start;
+                        sentenceEnd = cursorLine.from + sentence.end;
+
+                        if (includeHeader && sentence.start === 0) {
+                            const headerLine = state.doc.line(paragraphStartLine.number - 1);
+                            sentenceStart = headerLine.from;
+                        }
+                    } else {
+                        const prevContentLine = this.findPreviousContentLine(state, cursorLine.number);
+                        if (prevContentLine) {
+                            const sentence = this.findSentenceBoundaries(prevContentLine.text, prevContentLine.text.length);
+                            sentenceStart = prevContentLine.from + sentence.start;
+                            sentenceEnd = prevContentLine.from + sentence.end;
+
+                            const paragraphStart = this.findParagraphStart(state, prevContentLine.number);
+                            if (paragraphStart && paragraphStart.number > 1) {
+                                const headerLine = state.doc.line(paragraphStart.number - 1);
+                                if (headerRegex.test(headerLine.text) && sentence.start === 0) {
+                                    sentenceStart = headerLine.from;
+                                }
+                            }
+                        }
+                    }
+
+                    if (sentenceStart !== null && sentenceEnd !== null) {
+                        if (sentenceStart > 0) {
+                            decorationBuilder.push(dimmedDecoration.range(0, sentenceStart));
+                        }
+                        if (sentenceEnd < state.doc.length) {
+                            decorationBuilder.push(dimmedDecoration.range(sentenceEnd, state.doc.length));
+                        }
+                    }
+
+                } else if (plugin.settings.focusMode === 'paragraph') {
                     let headerRegex;
                     try {
                         headerRegex = new RegExp(plugin.settings.sectionHeaderPattern);
@@ -366,6 +444,32 @@ module.exports = class ScrollerPlugin extends Plugin {
                 } catch (error) {
                     return RangeSet.empty;
                 }
+            }
+
+            findParagraphStart(state, lineNumber) {
+                for (let lineNum = lineNumber; lineNum >= 1; lineNum--) {
+                    const line = state.doc.line(lineNum);
+                    if (line.text.trim().length > 0) {
+                        for (let upLineNum = lineNum - 1; upLineNum >= 1; upLineNum--) {
+                            const upLine = state.doc.line(upLineNum);
+                            if (upLine.text.trim().length === 0) {
+                                return line;
+                            }
+                        }
+                        return state.doc.line(1);
+                    }
+                }
+                return null;
+            }
+
+            findPreviousContentLine(state, lineNumber) {
+                for (let lineNum = lineNumber - 1; lineNum >= 1; lineNum--) {
+                    const line = state.doc.line(lineNum);
+                    if (line.text.trim().length > 0) {
+                        return line;
+                    }
+                }
+                return null;
             }
         }, {
             decorations: viewInstance => viewInstance.decorations
@@ -707,9 +811,10 @@ class ScrollerSettingTab extends PluginSettingTab {
 
         new Setting(typewriterFeaturesContainer)
             .setName('Focus area')
-            .setDesc('Choose whether to focus on the current paragraph, section or line.')
+            .setDesc('Choose whether to focus on the current paragraph, section, sentence or line.')
             .setDisabled(!this.plugin.settings.enableContentDimming)
             .addDropdown(dropdown => dropdown
+                .addOption('sentence', 'Sentence')
                 .addOption('paragraph', 'Paragraph')
                 .addOption('section', 'Section')
                 .addOption('line', 'Line')
@@ -732,7 +837,7 @@ class ScrollerSettingTab extends PluginSettingTab {
                 }));
         sectionPatternSetting.settingEl.style.display =
             (this.plugin.settings.enableContentDimming &&
-            (this.plugin.settings.focusMode === 'section' || this.plugin.settings.focusMode === 'paragraph')) ? 'flex' : 'none';
+            (this.plugin.settings.focusMode === 'section' || this.plugin.settings.focusMode === 'paragraph' || this.plugin.settings.focusMode === 'sentence')) ? 'flex' : 'none';
 
         new Setting(typewriterFeaturesContainer)
             .setName('Unfocused content opacity')
