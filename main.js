@@ -1,6 +1,7 @@
 const { Plugin, MarkdownView, PluginSettingTab, Setting } = require('obsidian');
 const { EditorView, ViewPlugin, Decoration } = require('@codemirror/view');
 const { RangeSet } = require('@codemirror/state');
+const { cursorLineUp, cursorLineDown } = require('@codemirror/commands');
 
 const DEFAULT_SETTINGS = {
     enableAutoScroll: true,
@@ -20,7 +21,10 @@ const DEFAULT_SETTINGS = {
     unfocusedOpacity: 0.25,
 
     enableSmoothScrolling: true,
-    smoothScrollDuration: 250
+    smoothScrollDuration: 250,
+
+    enableCursorScrolling: false,
+    cursorScrollingSensitivity: 20
 };
 
 module.exports = class ScrollerPlugin extends Plugin {
@@ -80,7 +84,16 @@ module.exports = class ScrollerPlugin extends Plugin {
                 this.pendingScrollUpdate = false;
                 this.decorations = this.buildDecorations(view);
                 this.anim = null;
+
+                this.wheelAccumulator = 0;
+                this.onWheel = this.onWheel.bind(this);
+                this.view.scrollDOM.addEventListener('wheel', this.onWheel, { passive: false });
+
                 this.scheduleScrollUpdate();
+            }
+
+            destroy() {
+                this.view.scrollDOM.removeEventListener('wheel', this.onWheel);
             }
 
             update(updateTransaction) {
@@ -94,6 +107,27 @@ module.exports = class ScrollerPlugin extends Plugin {
                 }
                 if (needsScrollUpdate) {
                     this.scheduleScrollUpdate();
+                }
+            }
+
+            onWheel(event) {
+                if (!plugin.settings.enableCursorScrolling || !this.shouldApplyTypewriterFeatures()) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                this.wheelAccumulator += event.deltaY;
+                const sensitivity = plugin.settings.cursorScrollingSensitivity;
+
+                const lineSteps = Math.trunc(this.wheelAccumulator / sensitivity);
+
+                if (lineSteps !== 0) {
+                    const command = lineSteps > 0 ? cursorLineDown : cursorLineUp;
+                    for (let i = 0; i < Math.abs(lineSteps); i++) {
+                        command(this.view);
+                    }
+                    this.wheelAccumulator %= sensitivity;
                 }
             }
 
@@ -221,20 +255,126 @@ module.exports = class ScrollerPlugin extends Plugin {
             }
 
             findSentenceBoundaries(text, position) {
-                const sentenceEndRegex = /[.!?]+[\s]*(?=[A-ZА-Я]|$)/g;
                 const boundaries = [];
-                let match;
 
-                while ((match = sentenceEndRegex.exec(text)) !== null) {
-                    boundaries.push(match.index + match[0].length);
+                for (let i = 0; i < text.length; i++) {
+                    if (!/[.!?]/.test(text[i])) continue;
+
+                    let endPos = i + 1;
+                    while (endPos < text.length && /[.!?]/.test(text[endPos])) {
+                        endPos++;
+                    }
+
+                    while (endPos < text.length && /[)\]}>'"»"'*_~`\s]/.test(text[endPos])) {
+                        endPos++;
+                    }
+
+                    if (endPos >= text.length) {
+                        boundaries.push(endPos);
+                        break;
+                    }
+
+                    if (!/\p{L}/u.test(text[endPos])) {
+                        continue;
+                    }
+
+                    const wordBefore = text.substring(0, i + 1).match(/\S+$/);
+                    if (wordBefore) {
+                        const word = wordBefore[0];
+
+                        if (word.length <= 4 && /^\p{L}+\.$/u.test(word)) {
+                            const wordWithoutDot = word.slice(0, -1).toLowerCase();
+
+                            const beforeWord = text.substring(0, i + 1 - word.length).match(/\S+\s*$/);
+                            const contextBefore = beforeWord ? beforeWord[0].trim().toLowerCase() : '';
+
+                            const compoundAbbrevs = {
+                                'д': ['т'],
+                                'п': ['т'],
+                                'э': ['н'],
+                                'ч': ['т'],
+                            };
+
+                            if (compoundAbbrevs[wordWithoutDot] && compoundAbbrevs[wordWithoutDot].includes(contextBefore)) {
+                                continue;
+                            }
+
+                            const units = ['г', 'кг', 'т', 'л', 'мл', 'м', 'см', 'мм', 'км', 'с', 'мин', 'ч'];
+                            if (units.includes(wordWithoutDot)) {
+                                continue;
+                            }
+
+                            const currency = ['р', 'руб', 'коп', '$', '€'];
+                            if (currency.includes(wordWithoutDot)) {
+                                continue;
+                            }
+
+                            const numbers = ['тыс', 'млн', 'млрд'];
+                            if (numbers.includes(wordWithoutDot)) {
+                                continue;
+                            }
+
+                            const titles = ['г', 'г-н', 'mr', 'mrs', 'ms', 'dr'];
+                            if (titles.includes(wordWithoutDot)) {
+                                continue;
+                            }
+
+                            const academic = ['проф', 'док', 'канд', 'акад'];
+                            if (academic.includes(wordWithoutDot)) {
+                                continue;
+                            }
+
+                            const corporate = ['ооо', 'оао', 'зао', 'inc', 'ltd', 'corp', 'co'];
+                            if (corporate.includes(wordWithoutDot)) {
+                                continue;
+                            }
+                        }
+
+                        if (/\d+\.\d*$/.test(word)) {
+                            continue;
+                        }
+
+                        if (/^\p{L}\p{L}?\.$/u.test(word)) {
+                            const wordWithoutDot = word.slice(0, -1);
+
+                            if (wordWithoutDot === wordWithoutDot.toUpperCase()) {
+                                const nextCharIndex = i + 1;
+                                let checkIndex = nextCharIndex;
+
+                                while (checkIndex < text.length && /\s/.test(text[checkIndex])) {
+                                    checkIndex++;
+                                }
+
+                                if (checkIndex < text.length && /\p{Lu}/u.test(text[checkIndex])) {
+                                    continue;
+                                }
+                            }
+                        }
+
+                        if (/v\d+\.\d+\.\d+/i.test(word) || /\d+\.\d+\.\d+/.test(word)) {
+                            continue;
+                        }
+                    }
+
+                    boundaries.push(endPos);
+                    i = endPos - 1;
                 }
 
                 let sentenceStart = 0;
                 for (const boundary of boundaries) {
-                    if (position <= boundary) {
+                    if (position < boundary) {
                         return { start: sentenceStart, end: boundary };
                     }
                     sentenceStart = boundary;
+                }
+
+                if (boundaries.length > 0 && position >= boundaries[boundaries.length - 1]) {
+                    const lastBoundary = boundaries[boundaries.length - 1];
+                    const afterText = text.substring(lastBoundary).trim();
+                    if (afterText.length === 0) {
+                        const prevBoundary = boundaries.length > 1 ? boundaries[boundaries.length - 2] : 0;
+                        return { start: prevBoundary, end: lastBoundary };
+                    }
                 }
 
                 return { start: sentenceStart, end: text.length };
@@ -254,6 +394,12 @@ module.exports = class ScrollerPlugin extends Plugin {
                 const { state } = editorView;
                 const cursorPosition = state.selection.main.head;
 
+                const addDecoration = (from, to) => {
+                    if (from < to && from >= 0 && to <= state.doc.length) {
+                        decorationBuilder.push(dimmedDecoration.range(from, to));
+                    }
+                };
+
                 if (plugin.settings.focusMode === 'sentence') {
                     let headerRegex;
                     try {
@@ -263,52 +409,76 @@ module.exports = class ScrollerPlugin extends Plugin {
                     }
 
                     const cursorLine = state.doc.lineAt(cursorPosition);
-                    const paragraphStartLine = this.findParagraphStart(state, cursorLine.number);
 
-                    let sentenceStart = null;
-                    let sentenceEnd = null;
-                    let includeHeader = false;
+                    if (cursorLine.text.trim().length === 0) {
+                        let shouldHighlightHeader = false;
+                        let headerStart = null;
 
-                    if (paragraphStartLine && paragraphStartLine.number > 1) {
-                        const prevLine = state.doc.line(paragraphStartLine.number - 1);
-                        if (headerRegex.test(prevLine.text)) {
-                            includeHeader = true;
+                        for (let lineNum = cursorLine.number - 1; lineNum >= 1; lineNum--) {
+                            const line = state.doc.line(lineNum);
+                            if (line.text.trim().length === 0) continue;
+
+                            if (headerRegex.test(line.text)) {
+                                shouldHighlightHeader = true;
+                                headerStart = line.from;
+                            }
+                            break;
                         }
-                    }
 
-                    if (cursorLine.text.trim().length > 0) {
-                        const cursorPositionInLine = cursorPosition - cursorLine.from;
-                        const sentence = this.findSentenceBoundaries(cursorLine.text, cursorPositionInLine);
-                        sentenceStart = cursorLine.from + sentence.start;
-                        sentenceEnd = cursorLine.from + sentence.end;
+                        if (shouldHighlightHeader && headerStart !== null) {
+                            addDecoration(0, headerStart);
 
-                        if (includeHeader && sentence.start === 0) {
-                            const headerLine = state.doc.line(paragraphStartLine.number - 1);
-                            sentenceStart = headerLine.from;
+                            const nextContentLine = this.findNextContentLine(state, cursorLine.number);
+                            let headerEnd;
+                            if (nextContentLine) {
+                                headerEnd = state.doc.line(state.doc.lineAt(headerStart).number).to;
+                            } else {
+                                headerEnd = state.doc.line(state.doc.lineAt(headerStart).number).to;
+                            }
+
+                            addDecoration(headerEnd, state.doc.length);
+                        } else {
+                            addDecoration(0, state.doc.length);
                         }
                     } else {
-                        const prevContentLine = this.findPreviousContentLine(state, cursorLine.number);
-                        if (prevContentLine) {
-                            const sentence = this.findSentenceBoundaries(prevContentLine.text, prevContentLine.text.length);
-                            sentenceStart = prevContentLine.from + sentence.start;
-                            sentenceEnd = prevContentLine.from + sentence.end;
+                        let sentenceStart = null;
+                        let sentenceEnd = null;
 
-                            const paragraphStart = this.findParagraphStart(state, prevContentLine.number);
-                            if (paragraphStart && paragraphStart.number > 1) {
-                                const headerLine = state.doc.line(paragraphStart.number - 1);
-                                if (headerRegex.test(headerLine.text) && sentence.start === 0) {
-                                    sentenceStart = headerLine.from;
+                        if (headerRegex.test(cursorLine.text)) {
+                            const nextContentLine = this.findNextContentLine(state, cursorLine.number);
+                            if (nextContentLine) {
+                                const sentence = this.findSentenceBoundaries(nextContentLine.text, 0);
+                                sentenceStart = cursorLine.from;
+                                sentenceEnd = nextContentLine.from + sentence.end;
+                            } else {
+                                sentenceStart = cursorLine.from;
+                                sentenceEnd = cursorLine.to;
+                            }
+                        } else {
+                            const cursorPositionInLine = cursorPosition - cursorLine.from;
+                            const sentence = this.findSentenceBoundaries(cursorLine.text, cursorPositionInLine);
+                            sentenceStart = cursorLine.from + sentence.start;
+                            sentenceEnd = cursorLine.from + sentence.end;
+
+                            if (sentence.start === 0) {
+                                let checkLine = cursorLine.number - 1;
+                                while (checkLine >= 1) {
+                                    const line = state.doc.line(checkLine);
+                                    if (line.text.trim().length === 0) {
+                                        checkLine--;
+                                        continue;
+                                    }
+                                    if (headerRegex.test(line.text)) {
+                                        sentenceStart = line.from;
+                                    }
+                                    break;
                                 }
                             }
                         }
-                    }
 
-                    if (sentenceStart !== null && sentenceEnd !== null) {
-                        if (sentenceStart > 0) {
-                            decorationBuilder.push(dimmedDecoration.range(0, sentenceStart));
-                        }
-                        if (sentenceEnd < state.doc.length) {
-                            decorationBuilder.push(dimmedDecoration.range(sentenceEnd, state.doc.length));
+                        if (sentenceStart !== null && sentenceEnd !== null) {
+                            addDecoration(0, sentenceStart);
+                            addDecoration(sentenceEnd, state.doc.length);
                         }
                     }
 
@@ -381,12 +551,8 @@ module.exports = class ScrollerPlugin extends Plugin {
                     }
 
                     if (paragraphStart !== null && paragraphEnd !== null) {
-                        if (paragraphStart > 0) {
-                            decorationBuilder.push(dimmedDecoration.range(0, paragraphStart));
-                        }
-                        if (paragraphEnd < state.doc.length) {
-                            decorationBuilder.push(dimmedDecoration.range(paragraphEnd, state.doc.length));
-                        }
+                        addDecoration(0, paragraphStart);
+                        addDecoration(paragraphEnd, state.doc.length);
                     }
 
                 } else if (plugin.settings.focusMode === 'section') {
@@ -422,21 +588,13 @@ module.exports = class ScrollerPlugin extends Plugin {
                         return RangeSet.empty;
                     }
 
-                    if (currentSectionStart > 0) {
-                        decorationBuilder.push(dimmedDecoration.range(0, currentSectionStart));
-                    }
-                    if (currentSectionEnd < state.doc.length) {
-                        decorationBuilder.push(dimmedDecoration.range(currentSectionEnd, state.doc.length));
-                    }
+                    addDecoration(0, currentSectionStart);
+                    addDecoration(currentSectionEnd, state.doc.length);
 
                 } else {
                     const currentLine = state.doc.lineAt(cursorPosition);
-                    if (currentLine.from > 0) {
-                        decorationBuilder.push(dimmedDecoration.range(0, currentLine.from));
-                    }
-                    if (currentLine.to < state.doc.length) {
-                        decorationBuilder.push(dimmedDecoration.range(currentLine.to, state.doc.length));
-                    }
+                    addDecoration(0, currentLine.from);
+                    addDecoration(currentLine.to, state.doc.length);
                 }
 
                 try {
@@ -464,6 +622,16 @@ module.exports = class ScrollerPlugin extends Plugin {
 
             findPreviousContentLine(state, lineNumber) {
                 for (let lineNum = lineNumber - 1; lineNum >= 1; lineNum--) {
+                    const line = state.doc.line(lineNum);
+                    if (line.text.trim().length > 0) {
+                        return line;
+                    }
+                }
+                return null;
+            }
+
+            findNextContentLine(state, lineNumber) {
+                for (let lineNum = lineNumber + 1; lineNum <= state.doc.lines; lineNum++) {
                     const line = state.doc.line(lineNum);
                     if (line.text.trim().length > 0) {
                         return line;
@@ -746,6 +914,30 @@ class ScrollerSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.restrictToDailyNotes)
                 .onChange(async (value) => {
                     this.plugin.settings.restrictToDailyNotes = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(typewriterFeaturesContainer)
+            .setName('Scroll with cursor')
+            .setDesc('Use the mouse wheel to move the cursor line by line instead of standard scrolling.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.enableCursorScrolling)
+                .onChange(async (value) => {
+                    this.plugin.settings.enableCursorScrolling = value;
+                    await this.plugin.saveSettings();
+                    this.display();
+                }));
+
+        new Setting(typewriterFeaturesContainer)
+            .setName('Cursor scrolling sensitivity')
+            .setDesc('Controls how much mouse wheel movement is needed to move one line. Lower is more sensitive.')
+            .setDisabled(!this.plugin.settings.enableCursorScrolling)
+            .addSlider(slider => slider
+                .setLimits(10, 200, 5)
+                .setValue(this.plugin.settings.cursorScrollingSensitivity)
+                .setDynamicTooltip()
+                .onChange(async (value) => {
+                    this.plugin.settings.cursorScrollingSensitivity = value;
                     await this.plugin.saveSettings();
                 }));
 
