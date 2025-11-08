@@ -16,7 +16,7 @@ const DEFAULT_SETTINGS = {
     visibleLineCount: 5,
 
     enableContentDimming: true,
-    focusMode: 'sentence',
+    focusMode: 'paragraph',
     sectionHeaderPattern: '^# ([01]\\d|2[0-3]):[0-5]\\d',
     unfocusedOpacity: 0.25,
 
@@ -717,9 +717,20 @@ module.exports = class ScrollerPlugin extends Plugin {
         }
 
         if (this.settings.enableContentDimming) {
+            const opacity = this.settings.unfocusedOpacity;
+
             cssRules += `
-                .scroller-dimmed-content {
-                    opacity: ${this.settings.unfocusedOpacity} !important;
+                .markdown-source-view .cm-line:has(.scroller-dimmed-content) {
+                    opacity: ${opacity} !important;
+                }
+
+                .markdown-source-view .internal-embed.image-embed {
+                    opacity: ${opacity} !important;
+                }
+
+                .markdown-source-view .cm-line.cm-active + .internal-embed.image-embed,
+                .markdown-source-view .internal-embed.image-embed:has(+ .cm-line.cm-active) {
+                    opacity: 1 !important;
                 }
             `;
         }
@@ -1006,8 +1017,8 @@ class ScrollerSettingTab extends PluginSettingTab {
             .setDesc('Choose whether to focus on the current paragraph, section, sentence or line.')
             .setDisabled(!this.plugin.settings.enableContentDimming)
             .addDropdown(dropdown => dropdown
-                .addOption('sentence', 'Sentence')
                 .addOption('paragraph', 'Paragraph')
+                .addOption('sentence', 'Sentence')
                 .addOption('section', 'Section')
                 .addOption('line', 'Line')
                 .setValue(this.plugin.settings.focusMode)
