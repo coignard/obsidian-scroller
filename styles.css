@@ -1,0 +1,38 @@
+body.scroller-hide-scrollbars ::-webkit-scrollbar {
+    display: none !important;
+}
+
+body.scroller-enable-dimming .markdown-source-view .cm-line:has(.scroller-dimmed-content) {
+    opacity: var(--scroller-unfocused-opacity, 0.25) !important;
+}
+
+body.scroller-enable-dimming .markdown-source-view .internal-embed.image-embed {
+    opacity: var(--scroller-unfocused-opacity, 0.25) !important;
+}
+
+body.scroller-enable-dimming .markdown-source-view .cm-line.cm-active + .internal-embed.image-embed,
+body.scroller-enable-dimming .markdown-source-view .internal-embed.image-embed:has(+ .cm-line.cm-active) {
+    opacity: 1 !important;
+}
+
+.scroller-typewriter-features {
+    border-top: 1px solid var(--background-modifier-border);
+    padding-top: 0.75em;
+}
+
+.scroller-typewriter-features.scroller-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.scroller-setting-disabled {
+    opacity: 0.5;
+}
+
+.scroller-setting-disabled .setting-item-control {
+    pointer-events: none;
+}
+
+.scroller-setting-hidden {
+    display: none !important;
+}

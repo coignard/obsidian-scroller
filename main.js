@@ -1,4 +1,4 @@
-const { Plugin, MarkdownView, PluginSettingTab, Setting } = require('obsidian');
+const { Plugin, MarkdownView, PluginSettingTab, Setting, normalizePath, moment } = require('obsidian');
 const { EditorView, ViewPlugin, Decoration } = require('@codemirror/view');
 const { RangeSet } = require('@codemirror/state');
 const { cursorLineUp, cursorLineDown } = require('@codemirror/commands');
@@ -34,13 +34,27 @@ module.exports = class ScrollerPlugin extends Plugin {
         this.addCommand({
             id: 'scroll-to-bottom',
             name: 'Scroll to bottom',
-            callback: () => this.ensureEditModeAndScroll('bottom'),
+            checkCallback: (checking) => {
+                const activeFile = this.app.workspace.getActiveFile();
+                if (checking) {
+                    return !!activeFile;
+                }
+                this.ensureEditModeAndScroll('bottom');
+                return true;
+            }
         });
 
         this.addCommand({
             id: 'scroll-to-top',
             name: 'Scroll to top',
-            callback: () => this.ensureEditModeAndScroll('top'),
+            checkCallback: (checking) => {
+                const activeFile = this.app.workspace.getActiveFile();
+                if (checking) {
+                    return !!activeFile;
+                }
+                this.ensureEditModeAndScroll('top');
+                return true;
+            }
         });
 
         if (this.settings.enableAutoScroll) {
@@ -701,41 +715,10 @@ module.exports = class ScrollerPlugin extends Plugin {
     }
 
     updateDynamicStyles() {
-        const dynamicStyleId = 'scroller-styles';
-        let styleElement = document.getElementById(dynamicStyleId);
-        if (!styleElement) {
-            styleElement = document.createElement('style');
-            styleElement.id = dynamicStyleId;
-            document.head.appendChild(styleElement);
-        }
+        document.body.classList.toggle('scroller-hide-scrollbars', this.settings.hideScrollbars);
+        document.body.classList.toggle('scroller-enable-dimming', this.settings.enableContentDimming);
 
-        let cssRules = '';
-        if (this.settings.hideScrollbars) {
-            cssRules += `
-                ::-webkit-scrollbar { display: none !important; }
-            `;
-        }
-
-        if (this.settings.enableContentDimming) {
-            const opacity = this.settings.unfocusedOpacity;
-
-            cssRules += `
-                .markdown-source-view .cm-line:has(.scroller-dimmed-content) {
-                    opacity: ${opacity} !important;
-                }
-
-                .markdown-source-view .internal-embed.image-embed {
-                    opacity: ${opacity} !important;
-                }
-
-                .markdown-source-view .cm-line.cm-active + .internal-embed.image-embed,
-                .markdown-source-view .internal-embed.image-embed:has(+ .cm-line.cm-active) {
-                    opacity: 1 !important;
-                }
-            `;
-        }
-
-        styleElement.textContent = cssRules;
+        document.body.style.setProperty('--scroller-unfocused-opacity', this.settings.unfocusedOpacity);
     }
 
     scrollToPosition(editor, position) {
@@ -766,31 +749,6 @@ module.exports = class ScrollerPlugin extends Plugin {
                     selection: { anchor: documentEnd }
                 });
 
-                if (this.settings.enableSmoothScrolling) {
-                    const scrollContainer = editorView.scrollDOM;
-                    const editorHeight = editorView.dom.clientHeight;
-
-                    const endCoords = editorView.coordsAtPos(documentEnd);
-                    if (endCoords) {
-                        const containerRect = scrollContainer.getBoundingClientRect();
-                        const currentTop = scrollContainer.scrollTop;
-                        const endPosInContainer = endCoords.top - containerRect.top + currentTop;
-
-                        let targetScroll;
-                        if (this.settings.useLineBoundaries) {
-                            const linesToKeep = this.settings.visibleLineCount;
-                            const lineHeight = editorView.defaultLineHeight;
-                            const bottomBoundary = editorHeight - (linesToKeep * lineHeight);
-                            targetScroll = endPosInContainer - bottomBoundary;
-                        } else {
-                            const verticalOffset = editorHeight * this.settings.typewriterOffset;
-                            targetScroll = endPosInContainer - verticalOffset;
-                        }
-
-                        this.animateScrollTo(scrollContainer, targetScroll);
-                    }
-                }
-            } else {
                 if (this.settings.enableSmoothScrolling) {
                     const scrollContainer = editorView.scrollDOM;
                     const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
@@ -825,9 +783,10 @@ module.exports = class ScrollerPlugin extends Plugin {
         const dailyNoteConfig = this.getDailyNoteConfiguration();
         if (!dailyNoteConfig || !dailyNoteConfig.format) return null;
 
-        const todayFilename = window.moment().format(dailyNoteConfig.format);
+        const todayFilename = moment().format(dailyNoteConfig.format);
         const notesFolder = dailyNoteConfig.folder || '';
-        return `${notesFolder ? notesFolder + '/' : ''}${todayFilename}.md`.replace(/\/+/g, '/');
+        const path = `${notesFolder ? notesFolder + '/' : ''}${todayFilename}.md`;
+        return normalizePath(path);
     }
 
     isActiveFileDailyNote() {
@@ -836,7 +795,7 @@ module.exports = class ScrollerPlugin extends Plugin {
 
         const expectedDailyNotePath = this.getCurrentDailyNotePath();
         return expectedDailyNotePath &&
-               activeFile.path.replace(/^\//, '') === expectedDailyNotePath.replace(/^\//, '');
+               normalizePath(activeFile.path) === expectedDailyNotePath;
     }
 
     async ensureEditModeAndScroll(position) {
@@ -854,10 +813,8 @@ module.exports = class ScrollerPlugin extends Plugin {
     }
 
     onunload() {
-        const dynamicStyleElement = document.getElementById('scroller-styles');
-        if (dynamicStyleElement) {
-            dynamicStyleElement.remove();
-        }
+        document.body.classList.remove('scroller-hide-scrollbars', 'scroller-enable-dimming');
+        document.body.style.removeProperty('--scroller-unfocused-opacity');
     }
 }
 
@@ -912,11 +869,8 @@ class ScrollerSettingTab extends PluginSettingTab {
                     this.display();
                 }));
 
-        const typewriterFeaturesContainer = containerEl.createDiv();
-        typewriterFeaturesContainer.style.opacity = this.plugin.settings.enableTypewriterMode ? "1" : "0.5";
-        typewriterFeaturesContainer.style.pointerEvents = this.plugin.settings.enableTypewriterMode ? "all" : "none";
-        typewriterFeaturesContainer.style.borderTop = '1px solid var(--background-modifier-border)';
-        typewriterFeaturesContainer.style.paddingTop = '0.75em';
+        const typewriterFeaturesContainer = containerEl.createDiv('scroller-typewriter-features');
+        typewriterFeaturesContainer.classList.toggle('scroller-disabled', !this.plugin.settings.enableTypewriterMode);
 
         new Setting(typewriterFeaturesContainer)
             .setName('Restrict to daily notes')
@@ -942,7 +896,7 @@ class ScrollerSettingTab extends PluginSettingTab {
         new Setting(typewriterFeaturesContainer)
             .setName('Cursor scrolling sensitivity')
             .setDesc('Controls how much mouse wheel movement is needed to move one line. Lower is more sensitive.')
-            .setDisabled(!this.plugin.settings.enableCursorScrolling)
+            .setClass(this.plugin.settings.enableCursorScrolling ? '' : 'scroller-setting-disabled')
             .addSlider(slider => slider
                 .setLimits(10, 200, 5)
                 .setValue(this.plugin.settings.cursorScrollingSensitivity)
@@ -966,7 +920,7 @@ class ScrollerSettingTab extends PluginSettingTab {
         new Setting(typewriterFeaturesContainer)
             .setName('Typewriter line position')
             .setDesc('Set the vertical position where the active line is maintained.')
-            .setDisabled(this.plugin.settings.useLineBoundaries)
+            .setClass(this.plugin.settings.useLineBoundaries ? 'scroller-setting-disabled' : '')
             .addSlider(slider => slider
                 .setLimits(0, 100, 5)
                 .setValue(this.plugin.settings.typewriterOffset * 100)
@@ -990,7 +944,7 @@ class ScrollerSettingTab extends PluginSettingTab {
         new Setting(typewriterFeaturesContainer)
             .setName('Visible line count')
             .setDesc('Number of lines to keep visible above and below the cursor when using line boundaries.')
-            .setDisabled(!this.plugin.settings.useLineBoundaries)
+            .setClass(!this.plugin.settings.useLineBoundaries ? 'scroller-setting-disabled' : '')
             .addText(text => text
                 .setValue(String(this.plugin.settings.visibleLineCount))
                 .onChange(async (value) => {
@@ -1015,7 +969,7 @@ class ScrollerSettingTab extends PluginSettingTab {
         new Setting(typewriterFeaturesContainer)
             .setName('Focus area')
             .setDesc('Choose whether to focus on the current paragraph, section, sentence or line.')
-            .setDisabled(!this.plugin.settings.enableContentDimming)
+            .setClass(!this.plugin.settings.enableContentDimming ? 'scroller-setting-disabled' : '')
             .addDropdown(dropdown => dropdown
                 .addOption('paragraph', 'Paragraph')
                 .addOption('sentence', 'Sentence')
@@ -1038,14 +992,17 @@ class ScrollerSettingTab extends PluginSettingTab {
                     this.plugin.settings.sectionHeaderPattern = value;
                     await this.plugin.saveSettings();
                 }));
-        sectionPatternSetting.settingEl.style.display =
-            (this.plugin.settings.enableContentDimming &&
-            (this.plugin.settings.focusMode === 'section' || this.plugin.settings.focusMode === 'paragraph' || this.plugin.settings.focusMode === 'sentence')) ? 'flex' : 'none';
+
+        const shouldShowPattern = this.plugin.settings.enableContentDimming &&
+            (this.plugin.settings.focusMode === 'section' ||
+             this.plugin.settings.focusMode === 'paragraph' ||
+             this.plugin.settings.focusMode === 'sentence');
+        sectionPatternSetting.settingEl.classList.toggle('scroller-setting-hidden', !shouldShowPattern);
 
         new Setting(typewriterFeaturesContainer)
             .setName('Unfocused content opacity')
             .setDesc('Set the opacity level for dimmed content outside the focus area.')
-            .setDisabled(!this.plugin.settings.enableContentDimming)
+            .setClass(!this.plugin.settings.enableContentDimming ? 'scroller-setting-disabled' : '')
             .addSlider(slider => slider
                 .setLimits(0, 80, 5)
                 .setValue(this.plugin.settings.unfocusedOpacity * 100)
@@ -1069,7 +1026,7 @@ class ScrollerSettingTab extends PluginSettingTab {
         new Setting(typewriterFeaturesContainer)
             .setName('Smooth scroll duration')
             .setDesc('Set animation duration for smooth scrolling.')
-            .setDisabled(!this.plugin.settings.enableSmoothScrolling)
+            .setClass(!this.plugin.settings.enableSmoothScrolling ? 'scroller-setting-disabled' : '')
             .addSlider(slider => slider
                 .setLimits(50, 1000, 50)
                 .setValue(this.plugin.settings.smoothScrollDuration)
