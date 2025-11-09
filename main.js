@@ -736,7 +736,7 @@ module.exports = class ScrollerPlugin extends Plugin {
             } else {
                 editorView.dispatch({
                     selection: { anchor: 0 },
-                    scrollIntoView: true
+                    effects: EditorView.scrollIntoView(0, { y: 'start' })
                 });
             }
         } else {
@@ -749,19 +749,30 @@ module.exports = class ScrollerPlugin extends Plugin {
                     selection: { anchor: documentEnd }
                 });
 
-                if (this.settings.enableSmoothScrolling) {
-                    const scrollContainer = editorView.scrollDOM;
-                    const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-                    this.animateScrollTo(scrollContainer, maxScroll);
-                    editorView.dispatch({
-                        selection: { anchor: documentEnd }
-                    });
-                } else {
-                    editorView.dispatch({
-                        selection: { anchor: documentEnd },
-                        scrollIntoView: true
-                    });
-                }
+                requestAnimationFrame(() => {
+                    const verticalOffset = editorView.dom.clientHeight * this.settings.typewriterOffset;
+
+                    if (this.settings.enableSmoothScrolling) {
+                        const coords = editorView.coordsAtPos(documentEnd);
+                        if (coords) {
+                            const scrollContainer = editorView.scrollDOM;
+                            const containerRect = scrollContainer.getBoundingClientRect();
+                            const currentTop = scrollContainer.scrollTop;
+                            const cursorTopInContainer = coords.top - containerRect.top + currentTop;
+                            const targetTop = cursorTopInContainer - verticalOffset;
+                            this.animateScrollTo(scrollContainer, targetTop);
+                        }
+                    } else {
+                        editorView.dispatch({
+                            effects: EditorView.scrollIntoView(documentEnd, { y: 'center' })
+                        });
+                    }
+                });
+            } else {
+                editorView.dispatch({
+                    selection: { anchor: documentEnd },
+                    effects: EditorView.scrollIntoView(documentEnd, { y: 'end' })
+                });
             }
         }
     }
