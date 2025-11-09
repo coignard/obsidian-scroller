@@ -904,10 +904,9 @@ class ScrollerSettingTab extends PluginSettingTab {
                     this.display();
                 }));
 
-        new Setting(typewriterFeaturesContainer)
+        const sensitivitySetting = new Setting(typewriterFeaturesContainer)
             .setName('Cursor scrolling sensitivity')
             .setDesc('Controls how much mouse wheel movement is needed to move one line. Lower is more sensitive.')
-            .setClass(this.plugin.settings.enableCursorScrolling ? '' : 'scroller-setting-disabled')
             .addSlider(slider => slider
                 .setLimits(10, 200, 5)
                 .setValue(this.plugin.settings.cursorScrollingSensitivity)
@@ -916,6 +915,10 @@ class ScrollerSettingTab extends PluginSettingTab {
                     this.plugin.settings.cursorScrollingSensitivity = value;
                     await this.plugin.saveSettings();
                 }));
+
+        if (!this.plugin.settings.enableCursorScrolling) {
+            sensitivitySetting.settingEl.addClass('scroller-setting-disabled');
+        }
 
         new Setting(typewriterFeaturesContainer)
             .setName('Typewriter scrolling')
@@ -928,10 +931,9 @@ class ScrollerSettingTab extends PluginSettingTab {
                     this.display();
                 }));
 
-        new Setting(typewriterFeaturesContainer)
+        const linePositionSetting = new Setting(typewriterFeaturesContainer)
             .setName('Typewriter line position')
             .setDesc('Set the vertical position where the active line is maintained.')
-            .setClass(this.plugin.settings.useLineBoundaries ? 'scroller-setting-disabled' : '')
             .addSlider(slider => slider
                 .setLimits(0, 100, 5)
                 .setValue(this.plugin.settings.typewriterOffset * 100)
@@ -940,6 +942,10 @@ class ScrollerSettingTab extends PluginSettingTab {
                     this.plugin.settings.typewriterOffset = value / 100;
                     await this.plugin.saveSettings();
                 }));
+
+        if (this.plugin.settings.useLineBoundaries) {
+            linePositionSetting.settingEl.addClass('scroller-setting-disabled');
+        }
 
         new Setting(typewriterFeaturesContainer)
             .setName('Line boundaries')
@@ -952,10 +958,9 @@ class ScrollerSettingTab extends PluginSettingTab {
                     this.display();
                 }));
 
-        new Setting(typewriterFeaturesContainer)
+        const visibleLinesSetting = new Setting(typewriterFeaturesContainer)
             .setName('Visible line count')
             .setDesc('Number of lines to keep visible above and below the cursor when using line boundaries.')
-            .setClass(!this.plugin.settings.useLineBoundaries ? 'scroller-setting-disabled' : '')
             .addText(text => text
                 .setValue(String(this.plugin.settings.visibleLineCount))
                 .onChange(async (value) => {
@@ -965,6 +970,10 @@ class ScrollerSettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     }
                 }));
+
+        if (!this.plugin.settings.useLineBoundaries) {
+            visibleLinesSetting.settingEl.addClass('scroller-setting-disabled');
+        }
 
         new Setting(typewriterFeaturesContainer)
             .setName('Focus mode')
@@ -977,10 +986,9 @@ class ScrollerSettingTab extends PluginSettingTab {
                     this.display();
                 }));
 
-        new Setting(typewriterFeaturesContainer)
+        const focusAreaSetting = new Setting(typewriterFeaturesContainer)
             .setName('Focus area')
             .setDesc('Choose whether to focus on the current paragraph, section, sentence or line.')
-            .setClass(!this.plugin.settings.enableContentDimming ? 'scroller-setting-disabled' : '')
             .addDropdown(dropdown => dropdown
                 .addOption('paragraph', 'Paragraph')
                 .addOption('sentence', 'Sentence')
@@ -992,6 +1000,10 @@ class ScrollerSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                     this.display();
                 }));
+
+        if (!this.plugin.settings.enableContentDimming) {
+            focusAreaSetting.settingEl.addClass('scroller-setting-disabled');
+        }
 
         const sectionPatternSetting = new Setting(typewriterFeaturesContainer)
             .setName('Section header regex')
@@ -1006,14 +1018,13 @@ class ScrollerSettingTab extends PluginSettingTab {
 
         const shouldShowPattern = this.plugin.settings.enableContentDimming &&
             (this.plugin.settings.focusMode === 'section' ||
-             this.plugin.settings.focusMode === 'paragraph' ||
-             this.plugin.settings.focusMode === 'sentence');
+            this.plugin.settings.focusMode === 'paragraph' ||
+            this.plugin.settings.focusMode === 'sentence');
         sectionPatternSetting.settingEl.classList.toggle('scroller-setting-hidden', !shouldShowPattern);
 
-        new Setting(typewriterFeaturesContainer)
+        const opacitySetting = new Setting(typewriterFeaturesContainer)
             .setName('Unfocused content opacity')
             .setDesc('Set the opacity level for dimmed content outside the focus area.')
-            .setClass(!this.plugin.settings.enableContentDimming ? 'scroller-setting-disabled' : '')
             .addSlider(slider => slider
                 .setLimits(0, 80, 5)
                 .setValue(this.plugin.settings.unfocusedOpacity * 100)
@@ -1022,6 +1033,10 @@ class ScrollerSettingTab extends PluginSettingTab {
                     this.plugin.settings.unfocusedOpacity = value / 100;
                     await this.plugin.saveSettings();
                 }));
+
+        if (!this.plugin.settings.enableContentDimming) {
+            opacitySetting.settingEl.addClass('scroller-setting-disabled');
+        }
 
         new Setting(typewriterFeaturesContainer)
             .setName('Enable smooth scrolling')
@@ -1034,10 +1049,9 @@ class ScrollerSettingTab extends PluginSettingTab {
                     this.display();
                 }));
 
-        new Setting(typewriterFeaturesContainer)
+        const durationSetting = new Setting(typewriterFeaturesContainer)
             .setName('Smooth scroll duration')
             .setDesc('Set animation duration for smooth scrolling.')
-            .setClass(!this.plugin.settings.enableSmoothScrolling ? 'scroller-setting-disabled' : '')
             .addSlider(slider => slider
                 .setLimits(50, 1000, 50)
                 .setValue(this.plugin.settings.smoothScrollDuration)
@@ -1046,5 +1060,9 @@ class ScrollerSettingTab extends PluginSettingTab {
                     this.plugin.settings.smoothScrollDuration = value;
                     await this.plugin.saveSettings();
                 }));
+
+        if (!this.plugin.settings.enableSmoothScrolling) {
+            durationSetting.settingEl.addClass('scroller-setting-disabled');
+        }
     }
 }
