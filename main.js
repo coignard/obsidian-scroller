@@ -147,7 +147,7 @@ module.exports = class ScrollerPlugin extends Plugin {
 			onWheel(event) {
                 const targetElement = event.target;
                 if (targetElement && typeof targetElement.closest === 'function') {
-                    if (targetElement.closest('table, tr, td, th')) {
+                    if (targetElement.closest('table, tr, td, th, .bases-view, .bases-embed')) {
                         return; 
                     }
                 }
