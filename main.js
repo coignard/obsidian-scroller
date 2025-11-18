@@ -145,29 +145,29 @@ module.exports = class ScrollerPlugin extends Plugin {
             }
 			
 			onWheel(event) {
-                const targetElement = event.target;
-                if (targetElement && typeof targetElement.closest === 'function') {
-                    if (targetElement.closest('table, tr, td, th, .bases-view, .bases-embed')) {
-                        return; 
-                    }
-                }
-                
-                if (!plugin.settings.enableCursorScrolling || !this.shouldApplyTypewriterFeatures()) {
-                    return;
-                }
+					const targetElement = event.target;
+					if (targetElement && typeof targetElement.closest === 'function') {
+						if (targetElement.closest('table, tr, td, th, .bases-view, .bases-embed, .metadata-container, .image-embed, .internal-embed')) {
+							return; 
+						}
+					}
+					
+					if (!plugin.settings.enableCursorScrolling || !this.shouldApplyTypewriterFeatures()) {
+						return;
+					}
 
-                event.preventDefault();
+					event.preventDefault();
 
-                this.wheelAccumulator += event.deltaY;
-                const sensitivity = plugin.settings.cursorScrollingSensitivity;
+					this.wheelAccumulator += event.deltaY;
+					const sensitivity = plugin.settings.cursorScrollingSensitivity;
 
-                if (Math.abs(this.wheelAccumulator) >= sensitivity) {
-                    const command = this.wheelAccumulator > 0 ? cursorLineDown : cursorLineUp;
-                    command(this.view);                   
-                    this.wheelAccumulator = 0;
-                }
-            }
-
+					if (Math.abs(this.wheelAccumulator) >= sensitivity) {
+						const command = this.wheelAccumulator > 0 ? cursorLineDown : cursorLineUp;
+						command(this.view);                   
+						this.wheelAccumulator = 0;
+					}
+			}
+			
             scheduleScrollUpdate() {
                 if (this.pendingScrollUpdate) return;
                 this.pendingScrollUpdate = true;
@@ -193,6 +193,14 @@ module.exports = class ScrollerPlugin extends Plugin {
                 
                 if (!containerRect) return;
 
+                const cursorHead = editorView.state.selection.main.head;
+                if (cursorHead === 0) {
+                    if (Math.abs(scrollContainer.scrollTop) > 2) {
+                         scrollContainer.scrollTop = 0;
+                    }
+                    return;
+                }
+
                 const verticalOffset = editorView.dom.clientHeight * plugin.settings.typewriterOffset;
                 const currentTop = scrollContainer.scrollTop;
 
@@ -212,8 +220,8 @@ module.exports = class ScrollerPlugin extends Plugin {
 
                     } else {
                         
-                        const cursorPosition = editorView.state.selection.main.head;
-                        const cmCoords = editorView.coordsAtPos(cursorPosition);
+                        // We already grabbed cursorHead above
+                        const cmCoords = editorView.coordsAtPos(cursorHead);
                         if (!cmCoords) return;
                         cursorViewportTop = cmCoords.top;
                     }
