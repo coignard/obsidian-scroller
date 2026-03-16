@@ -223,22 +223,26 @@ module.exports = class ScrollerPlugin extends Plugin {
                     const topBoundary = linesToKeep * lineHeight;
                     const bottomBoundary = editorHeight - (linesToKeep * lineHeight);
 
+                    const editorContainerRect = editorView.dom.getBoundingClientRect();
+                    const relativeCursorTop = cursorCoords.top - editorContainerRect.top;
+                    const relativeCursorBottom = cursorCoords.bottom - editorContainerRect.top;
+
                     const containerRect = scrollDOM.getBoundingClientRect();
                     const currentTop = scrollDOM.scrollTop;
-                    const cursorTopInContainer = cursorCoords.top - containerRect.top + currentTop;
-                    const cursorBottomInContainer = cursorCoords.bottom - containerRect.top + currentTop;
+                    const topScrollTarget = cursorCoords.top - containerRect.top + currentTop - topBoundary;
+                    const bottomScrollTarget = cursorCoords.bottom - containerRect.top + currentTop - bottomBoundary;
 
-                    if (cursorTopInContainer < topBoundary) {
+                    if (relativeCursorTop < topBoundary) {
                         if (this.smoothScrollingEnabled()) {
-                            this.animateScrollTo(cursorTopInContainer - topBoundary);
+                            this.animateScrollTo(topScrollTarget);
                         } else {
                             editorView.dispatch({
                                effects: EditorView.scrollIntoView(cursorPosition, { y: 'start', yMargin: topBoundary })
                             });
                         }
-                    } else if (cursorBottomInContainer > bottomBoundary) {
+                    } else if (relativeCursorBottom > bottomBoundary) {
                         if (this.smoothScrollingEnabled()) {
-                            this.animateScrollTo(cursorBottomInContainer - bottomBoundary);
+                            this.animateScrollTo(bottomScrollTarget);
                         } else {
                             editorView.dispatch({
                                effects: EditorView.scrollIntoView(cursorPosition, { y: 'end', yMargin: editorHeight - bottomBoundary })
